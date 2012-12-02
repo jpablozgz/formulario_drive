@@ -6,14 +6,13 @@
 		<th>Id</th><th>Name</th><th>E-mail</th><th>Password</th><th>Description</th><th>Pet</th>
 		<th>City</th><th>Code</th><th>Language</th><th>Photo</th><th>Action</th>
 	</tr>
-	<?php foreach($arrayUsers as $key => $users):?>
+	<?php foreach($arrayUsers as $key => $user):?>
 		<tr>
 		<?php
-		$user=explode("|",$users);
 		foreach($user as $value):
 		?>
 			<td>
-			<?=nl2br(htmlspecialchars($value)); ?>
+			<?=str_replace(array("\n","\r"),"", nl2br(htmlspecialchars($value))); ?>
 			</td>
 		<?php endforeach;?>
 		<td>

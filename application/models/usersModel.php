@@ -31,10 +31,10 @@ function uploadImage($_FILES, $config)
  * @param array $config Config variables
  * @return string: Filename of the new photo
  */
-function updateImage($_FILES, $id, $config)
+function updateImage($_FILES, $id, $service, $config)
 {
-	$arrayUser=readUser($id,$config);
-	$image=trim($arrayUser[9]);
+	$arrayUser=readUser($id, $service, $config);
+	$image=trim($arrayUser['photo']);
 	if(!$_FILES['photo']['error'])
 	{
 		unlink($config['uploadDirectory']."/".$image); // deletes old photo
@@ -43,138 +43,111 @@ function updateImage($_FILES, $id, $config)
 	return $image;
 }
 
-/** Write user to .txt file
+/** Write user to the worksheet
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param string $imageName Final filename of the photograph
  * @param array $config Config variables
  */
-function writeToFile($imageName, $config)
+function writeToWorksheet($service, $imageName, $config)
 {
-	$arrayUser = array_merge(initArrayUserWithKeys(),$_POST);
-	
+	$arrayUser = array_merge(initArrayUser(),$_POST);
+			
 	foreach($arrayUser as $key => $value)
 	{
 		if(is_array($value))
 			$value=implode(',',$value);
 		$arrayUser[$key]=trim($value);
 	}	
-	$arrayUser[]=$imageName;
-	$textUser=implode('|',$arrayUser);
+	$arrayUser['photo']=$imageName;
 	
-	appendUserToFile($textUser, $config);
+	appendUserToWorksheet($arrayUser, $service, $config);
 }
 
-/** Update user in .txt file
+/** Update user in worksheet
  * @param int $id User id
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param string $imageName Photo filename
  * @param array $config Config variables
  */
-function updateToFile($id, $imageName, $config)
+function updateToWorksheet($id, $service, $imageName, $config)
 {
-	// Reads users data from file
-	$arrayUsers=readUsersFromFile($config);
+	$arrayUser = array_merge(initArrayUser(),$_POST);
 		
-	$arrayUser = array_merge(initArrayUserWithKeys(),$_POST);
-	
 	foreach($arrayUser as $key => $value)
 	{
 		if(is_array($value))
 			$value=implode(',',$value);
 		$arrayUser[$key]=trim($value);
 	}	
-	$arrayUser[]=$imageName;
-	$textUser=implode('|',$arrayUser);
+	$arrayUser['photo']=$imageName;
 	
-	$arrayUsers[$id]=$textUser;
-	writeUsersToFile($arrayUsers, $config);
+	updateUserToWorksheet($id, $arrayUser, $service, $config);
 }
 
-/** Read users from file
+/** Read users from worksheet
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param array $config Config variables
  * @return array: Users array
  */
-function readUsersFromFile($config)
+function readUsersFromWorksheet($service, $config)
 {
-	// Ignore the final "\r\n" and other trash at the end/beginning of file
-	$usersText = trim(file_get_contents($config['filename']));
+	$arrayUsers = getWorksheetContentsAsRows($service, $config);
 	
-	// Remove all newline chars ('\n') preceded by a <br /> tag
-	$sustituye = array("<br />\n\r", "<br />\r\n", "br />\n");
-	$usersText = str_replace($sustituye, "<br />\r", $usersText);
+	// Replace all <br /> tags by the CR+LF sequence
+	foreach ($arrayUsers as $row_idx => $row)
+		foreach($row as $key => $value)
+			$arrayUsers[$row_idx][$key] = str_replace("<br />", "\r\n", $value);
 
-	// Remove BOM if exists
-	$bom = pack("CCC", 0xef, 0xbb, 0xbf);
-	if (0 == strncmp($usersText, $bom, 3))
-		$usersText = substr($usersText, 3);
-	
-	// Segregate users delimited by the CR+LF sequence
-	$arrayUsers=($usersText ? explode("\r\n",$usersText) : array());
-	
-	// Restore all newline chars previously removed and remove the <br /> tags
-	foreach ($arrayUsers as $key => $value)
-		$arrayUsers[$key] = str_replace("<br />\r","\r\n",$value);
-	
 	return $arrayUsers;
 }
 
-/** Append user to file
- * @param string $textUser User text
- * @param string $config Config variables
- */
-function appendUserToFile($textUser, $config)
-{
-	// Since line feeds are allowed in form textareas, and \r\n delimits users
-	// within the text file, we prefix those line feeds with the <br /> tag in
-	// order to properly detect them when reading+parsing the text file
-	$textUser=nl2br($textUser);
-	
-	file_put_contents($config['filename'],$textUser."\r\n",FILE_APPEND);
-}
-
-/** Write users to file
- * @param array $arrayUsers Users array
+/** Append user to worksheet
+ * @param array $arrayUser User array
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param array $config Config variables
  */
-function writeUsersToFile($arrayUsers, $config)
+function appendUserToWorksheet($arrayUser, $service, $config)
 {
-	// Precede line feeds with the <br /> tag
-	foreach ($arrayUsers as $key => $value)
-		$arrayUsers[$key] = nl2br($value);
-	// Users segregated by the newline character ('\')
-	$textUsers=implode("\r\n",$arrayUsers);
-	// Write to file
-	if($textUsers)
-		file_put_contents($config['filename'],$textUsers."\r\n");
-	else 
-		file_put_contents($config['filename'],"");
+	// Since line feeds are allowed in form textareas, but are not allowed in
+	// a Google spreadsheet, we replace those line feeds with the <br /> tag
+	$sustituye = array("\r\n","\n\r","\n","\r");
+	foreach($arrayUser as $key => $value)
+		$arrayUser[$key] = str_replace($sustituye, "<br />", nl2br($value));
+	
+	appendWorksheetRow($arrayUser, $service, $config);
+}
+
+/** Append user to file
+ * @param int $id User id
+ * @param array $arrayUser User array
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
+ * @param array $config Config variables
+ */
+function updateUserToWorksheet($id, $arrayUser, $service, $config)
+{
+	// Since line feeds are allowed in form textareas, but are not allowed in
+	// a Google spreadsheet, we replace those line feeds with the <br /> tag
+	$sustituye = array("\r\n","\n\r","\n","\r");
+	foreach($arrayUser as $key => $value)
+		$arrayUser[$key] = str_replace($sustituye, "<br />", nl2br($value));
+
+    updateWorksheetRow($id, $arrayUser, $service, $config);
 }
 
 /**
- * Read user from file to array
+ * Read user from worksheet to array
  * @param int $id Usr id
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param array $config Config variables
- * @return string: 
+ * @return array: User array
  */
-function readUser($id, $config)
+function readUser($id, $service, $config)
 {
 	// Read users
-	$arrayUsers=readUsersFromFile($config);
+	$arrayUsers=readUsersFromWorksheet($service, $config);
 	// Select data of user $id
 	$arrayUser=$arrayUsers[$_GET['id']];
-	$arrayUser=explode("|",$arrayUser);
 	return($arrayUser);
-}
-
-/**
- * Initialize user array with keys
- * @return array: User array initialized
- */
-function initArrayUserWithKeys()
-{
-	$keys=array('id','name','email','pass','desc','pet','city','coder','languages');
-	$arrayUser=array();
-	foreach($keys as $key)
-		$arrayUser[$key]=NULL;
-	return $arrayUser;
 }
 
 /**
@@ -183,32 +156,28 @@ function initArrayUserWithKeys()
  */
 function initArrayUser()
 {
+	$keys=array('id','name','email','password','description','pets','city','coder','languages');
 	$arrayUser=array();
-	for($i=0;$i<10;$i++)
-		$arrayUser[$i]=NULL;
+	foreach($keys as $key)
+		$arrayUser[$key]=NULL;
 	return $arrayUser;
 }
 
 /**
- * Delete user from file and image from directory
+ * Delete user from worksheet and image from directory
  * @param int $id User id
+ * @param Zend_Gdata_Spreadsheets $service Google Drive service
  * @param array $config Config variables
  */
-function deleteUser($id, $config)
+function deleteUser($id, $service, $config)
 {
-	$arrayUser = readUser($id, $config);
+	$arrayUser = readUser($id, $service, $config);
 	
 	// Delete user photo
-	$image = $arrayUser[9];
-	$image=str_replace("\r", "", $image);
-	$image=str_replace("\n", "", $image);
+	$image = $arrayUser['photo'];
 	unlink($config['uploadDirectory']."/".$image);
 
-	// Deletes the user from the users array
-	$arrayUsers=readUsersFromFile($config);
-	unset($arrayUsers[$id]);
-	
-	// Rewrites the .txt file
-	writeUsersToFile($arrayUsers, $config);
+	// Deletes user from worksheet
+	deleteRowFromFile($id, $service, $config);
 }
 ?>
